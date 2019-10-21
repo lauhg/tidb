@@ -42,6 +42,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"runtime"
 	"strconv"
 	"strings"
@@ -156,6 +157,7 @@ type clientConn struct {
 	status       int32             // dispatching/reading/shutdown/waitshutdown
 	lastCode     uint16            // last error code
 	collation    uint8             // collation used by client, may be different from the collation used by database.
+	intoFlag     bool
 }
 
 func (cc *clientConn) String() string {
@@ -1143,6 +1145,14 @@ func (cc *clientConn) handleLoadStats(ctx context.Context, loadStatsInfo *execut
 // There is a special query `load data` that does not return result, which is handled differently.
 // Query `load stats` does not return result either.
 func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
+	//TODO: Into stmt
+	if idx := strings.Index(sql, "into"); idx != -1 {
+		cc.intoFlag = true
+		sql = sql[:idx]
+	} else {
+		cc.intoFlag = false
+	}
+
 	rs, err := cc.ctx.Execute(ctx, sql)
 	if err != nil {
 		metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err)).Inc()
@@ -1153,6 +1163,7 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 		killConn(cc)
 		return executor.ErrQueryInterrupted
 	}
+
 	if rs != nil {
 		if len(rs) == 1 {
 			err = cc.writeResultset(ctx, rs[0], false, 0, 0)
@@ -1168,13 +1179,13 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 			}
 		}
 
-		loadStats := cc.ctx.Value(executor.LoadStatsVarKey)
-		if loadStats != nil {
-			defer cc.ctx.SetValue(executor.LoadStatsVarKey, nil)
-			if err = cc.handleLoadStats(ctx, loadStats.(*executor.LoadStatsInfo)); err != nil {
-				return err
-			}
-		}
+		//loadStats := cc.ctx.Value(executor.LoadStatsVarKey)
+		//if loadStats != nil {
+		//	defer cc.ctx.SetValue(executor.LoadStatsVarKey, nil)
+		//	if err = cc.handleLoadStats(ctx, loadStats.(*executor.LoadStatsInfo)); err != nil {
+		//		return err
+		//	}
+		//}
 
 		err = cc.writeOK()
 	}
@@ -1235,7 +1246,16 @@ func (cc *clientConn) writeResultset(ctx context.Context, rs ResultSet, binary b
 		logutil.Logger(ctx).Error("write query result panic", zap.String("lastCmd", cc.lastCmd), zap.String("stack", string(buf)))
 	}()
 	var err error
-	if mysql.HasCursorExistsFlag(serverStatus) {
+
+	//判断标志位
+	if cc.intoFlag {
+		err = cc.writeChunksToFile(ctx, rs, binary, serverStatus)
+		if err != nil {
+			err = cc.writeError(err)
+		} else {
+			err = cc.writeOK()
+		}
+	} else if mysql.HasCursorExistsFlag(serverStatus) {
 		err = cc.writeChunksWithFetchSize(ctx, rs, serverStatus, fetchSize)
 	} else {
 		err = cc.writeChunks(ctx, rs, binary, serverStatus)
@@ -1306,6 +1326,68 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 		}
 	}
 	return cc.writeEOF(serverStatus)
+}
+
+//TODO: Dump to file(text, binary)...
+func (cc *clientConn) writeChunksToFile(ctx context.Context, rs ResultSet, binary bool, serverStatus uint16) error {
+	data := cc.alloc.AllocWithLen(0, 1024)
+	req := rs.NewChunk()
+	count := int64(0)
+	binary = true
+
+	//TODO: IntoFileFlag
+	//If the secure_file_priv system variable is set to a nonempty directory name, the file to be written must be located in that directory.
+	defaultLineTerm := []byte{'\n'}
+	defaultFieldTerm := []byte{'\t'}
+	//defaultEscape := []byte{'\\'}
+	//defaultEnclose := []byte{'"'}
+	defaultFileTerm := []byte{0}
+
+	if binary {
+		defaultFieldTerm = nil
+	}
+
+	f, err := os.OpenFile("/tmp/dat2", os.O_CREATE | os.O_WRONLY | os.O_APPEND, 0666)
+	defer f.Close()
+
+	if err != nil {
+		return err
+	}
+
+	for {
+		// Here server.tidbResultSet implements Next method.
+		err := rs.Next(ctx, req)
+		if err != nil {
+			return err
+		}
+
+		rowCount := req.NumRows()
+		if rowCount == 0 {
+			break
+		}
+		for i := 0; i < rowCount; i++ {
+			data = data[:0]
+
+			data, err = dumpTextRowOnly(data, rs.Columns(), req.GetRow(i), defaultFieldTerm)
+			if err != nil {
+				return err
+			}
+			cnt, err := f.Write(data)
+			if err != nil {
+				return err
+			}
+			count += int64(cnt)
+			//换行符
+			if !binary {
+				f.Write(defaultLineTerm)
+			}
+		}
+		//结束符
+		if !binary {
+			f.Write(defaultFileTerm)
+		}
+	}
+	return f.Sync()
 }
 
 // writeChunksWithFetchSize writes data from a Chunk, which filled data by a ResultSet, into a connection.
