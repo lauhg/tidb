@@ -49,9 +49,12 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/tidb/planner/core"
+
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -1145,14 +1148,6 @@ func (cc *clientConn) handleLoadStats(ctx context.Context, loadStatsInfo *execut
 // There is a special query `load data` that does not return result, which is handled differently.
 // Query `load stats` does not return result either.
 func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
-	//TODO: Into stmt
-	if idx := strings.Index(sql, "into"); idx != -1 {
-		cc.intoFlag = true
-		sql = sql[:idx]
-	} else {
-		cc.intoFlag = false
-	}
-
 	rs, err := cc.ctx.Execute(ctx, sql)
 	if err != nil {
 		metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err)).Inc()
@@ -1163,7 +1158,6 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 		killConn(cc)
 		return executor.ErrQueryInterrupted
 	}
-
 	if rs != nil {
 		if len(rs) == 1 {
 			err = cc.writeResultset(ctx, rs[0], false, 0, 0)
@@ -1247,9 +1241,16 @@ func (cc *clientConn) writeResultset(ctx context.Context, rs ResultSet, binary b
 	}()
 	var err error
 
-	//判断标志位
-	if cc.intoFlag {
-		err = cc.writeChunksToFile(ctx, rs, binary, serverStatus)
+	selectIntoInfo := cc.ctx.Value(core.SelectIntoVarKey)
+	if selectIntoInfo != nil {
+		defer cc.ctx.SetValue(core.SelectIntoVarKey, nil)
+
+		into := selectIntoInfo.(*core.SelectIntoInfo)
+
+		if into.Tp == ast.SelectIntoOutfile {
+			err = cc.writeChunksToFile(ctx, rs, into, binary, serverStatus)
+		}
+
 		if err != nil {
 			err = cc.writeError(err)
 		} else {
@@ -1290,12 +1291,19 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 	data := cc.alloc.AllocWithLen(4, 1024)
 	req := rs.NewChunk()
 	gotColumnInfo := false
+
+	f, err := os.OpenFile("/tmp/dat2", os.O_APPEND|os.O_WRONLY, 0600)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
 	for {
 		// Here server.tidbResultSet implements Next method.
 		err := rs.Next(ctx, req)
 		if err != nil {
 			return err
 		}
+		//rowDesc
 		if !gotColumnInfo {
 			// We need to call Next before we get columns.
 			// Otherwise, we will get incorrect columns info.
@@ -1306,10 +1314,14 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 			}
 			gotColumnInfo = true
 		}
+		//rowData
 		rowCount := req.NumRows()
 		if rowCount == 0 {
 			break
 		}
+		//selectStmt, ok := rs.(*tidbResultSet).recordSet.(*executor.recordSet).Stmt().StmtNode.(*ast.SelectStmt)
+		//hasInto := ok && selectStmt.Into != nil
+		hasInto := false
 		for i := 0; i < rowCount; i++ {
 			data = data[0:4]
 			if binary {
@@ -1323,31 +1335,31 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 			if err = cc.writePacket(data); err != nil {
 				return err
 			}
+			if hasInto {
+				if _, err := f.Write(data); err != nil {
+				}
+			}
 		}
 	}
+	f.Sync()
 	return cc.writeEOF(serverStatus)
 }
 
 //TODO: Dump to file(text, binary)...
-func (cc *clientConn) writeChunksToFile(ctx context.Context, rs ResultSet, binary bool, serverStatus uint16) error {
+func (cc *clientConn) writeChunksToFile(ctx context.Context, rs ResultSet, into *core.SelectIntoInfo, binary bool, serverStatus uint16) error {
 	data := cc.alloc.AllocWithLen(0, 1024)
 	req := rs.NewChunk()
 	count := int64(0)
-	binary = true
 
 	//TODO: IntoFileFlag
 	//If the secure_file_priv system variable is set to a nonempty directory name, the file to be written must be located in that directory.
-	defaultLineTerm := []byte{'\n'}
-	defaultFieldTerm := []byte{'\t'}
 	//defaultEscape := []byte{'\\'}
 	//defaultEnclose := []byte{'"'}
 	defaultFileTerm := []byte{0}
+	fieldTerm := []byte(into.FieldsInfo.Terminated)
+	lineTerm := []byte(into.LinesInfo.Terminated)
 
-	if binary {
-		defaultFieldTerm = nil
-	}
-
-	f, err := os.OpenFile("/tmp/dat2", os.O_CREATE | os.O_WRONLY | os.O_APPEND, 0666)
+	f, err := os.OpenFile(into.FileName, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
 	defer f.Close()
 
 	if err != nil {
@@ -1368,7 +1380,7 @@ func (cc *clientConn) writeChunksToFile(ctx context.Context, rs ResultSet, binar
 		for i := 0; i < rowCount; i++ {
 			data = data[:0]
 
-			data, err = dumpTextRowOnly(data, rs.Columns(), req.GetRow(i), defaultFieldTerm)
+			data, err = dumpTextRowOnly(data, rs.Columns(), req.GetRow(i), fieldTerm)
 			if err != nil {
 				return err
 			}
@@ -1379,7 +1391,7 @@ func (cc *clientConn) writeChunksToFile(ctx context.Context, rs ResultSet, binar
 			count += int64(cnt)
 			//换行符
 			if !binary {
-				f.Write(defaultLineTerm)
+				f.Write(lineTerm)
 			}
 		}
 		//结束符

@@ -136,6 +136,8 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildLoadStats(v)
 	case *plannercore.PhysicalLimit:
 		return b.buildLimit(v)
+	case *plannercore.PhysicalSelectInto:
+		return b.buildSelectInto(v)
 	case *plannercore.Prepare:
 		return b.buildPrepare(v)
 	case *plannercore.PhysicalLock:
@@ -708,6 +710,20 @@ func (b *executorBuilder) buildInsert(v *plannercore.Insert) Executor {
 		OnDuplicate:  append(v.OnDuplicate, v.GenCols.OnDuplicates...),
 	}
 	return insert
+}
+
+func (b *executorBuilder) buildSelectInto(v *plannercore.PhysicalSelectInto) Executor {
+	e := &SelectIntoExec{
+		baseExecutor: newBaseExecutor(b.ctx, nil, v.ExplainID()),
+		selectIntoInfo: &SelectIntoInfo{
+			Ctx:        b.ctx,
+			Tp:         v.Tp,
+			FileName:   v.FileName,
+			FieldsInfo: v.FieldsInfo,
+			LinesInfo:  v.LinesInfo,
+		},
+	}
+	return e
 }
 
 func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) Executor {

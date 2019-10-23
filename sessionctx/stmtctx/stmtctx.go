@@ -56,6 +56,7 @@ type StatementContext struct {
 	InUpdateStmt           bool
 	InDeleteStmt           bool
 	InSelectStmt           bool
+	HasInto                bool
 	InLoadDataStmt         bool
 	InExplainStmt          bool
 	IgnoreTruncate         bool
@@ -89,11 +90,11 @@ type StatementContext struct {
 			they are used to count rows for INSERT/REPLACE/UPDATE queries:
 			  If a row is inserted then the copied variable is incremented.
 			  If a row is updated by the INSERT ... ON DUPLICATE KEY UPDATE and the
-			     new data differs from the old one then the copied and the updated
-			     variables are incremented.
+				 new data differs from the old one then the copied and the updated
+				 variables are incremented.
 			  The touched variable is incremented if a row was touched by the update part
-			     of the INSERT ... ON DUPLICATE KEY UPDATE no matter whether the row
-			     was actually changed or not.
+				 of the INSERT ... ON DUPLICATE KEY UPDATE no matter whether the row
+				 was actually changed or not.
 
 			see https://github.com/mysql/mysql-server/blob/d2029238d6d9f648077664e4cdd611e231a6dc14/sql/sql_data_change.h#L60 for more details
 		*/

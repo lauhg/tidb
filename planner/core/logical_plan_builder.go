@@ -1156,6 +1156,38 @@ func (b *PlanBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) (LogicalPlan
 	return li, nil
 }
 
+func (b *PlanBuilder) buildSelectInto(src LogicalPlan, into *ast.SelectInto) (LogicalPlan, error) {
+	li := LogicalSelectInto{
+		Tp:         into.Tp,
+		FileName:   into.FileName,
+		FieldsInfo: into.FieldsInfo,
+		LinesInfo:  into.LinesInfo,
+	}.Init(b.ctx, b.getSelectOffset())
+	li.SetChildren(src)
+	return li, nil
+}
+
+func (b *PlanBuilder) setSelectIntoInfo(into *ast.SelectInto) error {
+	info := &SelectIntoInfo{
+		Tp:         into.Tp,
+		FileName:   into.FileName,
+		FieldsInfo: into.FieldsInfo,
+		LinesInfo:  into.LinesInfo,
+	}
+	sctx := b.ctx
+	val := sctx.Value(SelectIntoVarKey)
+	if val != nil {
+		sctx.SetValue(SelectIntoVarKey, nil)
+		panic("TODO")
+	}
+	if info.FileName == "" {
+		return errors.New("Select Into: filename is empty")
+	}
+	sctx.SetValue(SelectIntoVarKey, info)
+
+	return nil
+}
+
 // colMatch means that if a match b, e.g. t.a can match test.t.a but test.t.a can't match t.a.
 // Because column a want column from database test exactly.
 func colMatch(a *ast.ColumnName, b *ast.ColumnName) bool {
@@ -2235,6 +2267,16 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 			return nil, err
 		}
 	}
+
+	if sel.Into != nil {
+		b.setSelectIntoInfo(sel.Into)
+	}
+	// if sel.Into != nil {
+	// 	p, err = b.buildSelectInto(p, sel.Into)
+	// 	if err != nil {
+	// 		return nil, err
+	// 	}
+	// }
 
 	sel.Fields.Fields = originalFields
 	if oldLen != p.Schema().Len() {

@@ -1537,6 +1537,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.InLoadDataStmt = true
 	case *ast.SelectStmt:
 		sc.InSelectStmt = true
+		sc.HasInto = s.(*ast.SelectStmt).Into != nil
 
 		// see https://dev.mysql.com/doc/refman/5.7/en/sql-mode.html#sql-mode-strict
 		// said "For statements such as SELECT that do not change data, invalid values

@@ -70,6 +70,8 @@ const (
 	TypeDual = "TableDual"
 	// TypeLock is the type of SelectLock.
 	TypeLock = "SelectLock"
+	// TypeInto is the type of SelectInto.
+	TypeInto = "SelectInto"
 	// TypeInsert is the type of Insert
 	TypeInsert = "Insert"
 	// TypeUpdate is the type of Update.
@@ -125,6 +127,7 @@ const (
 	typeExistsID
 	typeDualID
 	typeLockID
+	typeIntoID
 	typeInsertID
 	typeUpdateID
 	typeDeleteID
@@ -196,6 +199,8 @@ func TypeStringToPhysicalID(tp string) int {
 		return typeDualID
 	case TypeLock:
 		return typeLockID
+	case TypeInto:
+		return typeIntoID
 	case TypeInsert:
 		return typeInsertID
 	case TypeUpdate:
@@ -282,6 +287,8 @@ func PhysicalIDToTypeString(id int) string {
 		return TypeDual
 	case typeLockID:
 		return TypeLock
+	case typeIntoID:
+		return TypeInto
 	case typeInsertID:
 		return TypeInsert
 	case typeUpdateID:

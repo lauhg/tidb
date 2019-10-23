@@ -1552,6 +1552,17 @@ func (p *LogicalLock) exhaustPhysicalPlans(prop *property.PhysicalProperty) []Ph
 	return []PhysicalPlan{lock}
 }
 
+func (p *LogicalSelectInto) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
+	childProp := prop.Clone()
+	into := PhysicalSelectInto{
+		Tp:         p.Tp,
+		FileName:   p.FileName,
+		FieldsInfo: p.FieldsInfo,
+		LinesInfo:  p.LinesInfo,
+	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, childProp)
+	return []PhysicalPlan{into}
+}
+
 func (p *LogicalUnionAll) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
 	// TODO: UnionAll can not pass any order, but we can change it to sort merge to keep order.
 	if !prop.IsEmpty() {

@@ -330,6 +330,16 @@ type PhysicalLock struct {
 	TblID2Handle map[int64][]*expression.Column
 }
 
+// PhysicalSelectInto represents a select into plan.
+type PhysicalSelectInto struct {
+	basePhysicalPlan
+
+	Tp         ast.SelectIntoType
+	FileName   string
+	FieldsInfo *ast.FieldsClause
+	LinesInfo  *ast.LinesClause
+}
+
 // PhysicalLimit is the physical operator of Limit.
 type PhysicalLimit struct {
 	basePhysicalPlan

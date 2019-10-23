@@ -247,9 +247,23 @@ func (p LogicalLock) Init(ctx sessionctx.Context) *LogicalLock {
 	return &p
 }
 
+// Init initializes LogicalSelectInto.
+func (p LogicalSelectInto) Init(ctx sessionctx.Context, offset int) *LogicalSelectInto {
+	p.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeInto, &p, offset)
+	return &p
+}
+
 // Init initializes PhysicalLock.
 func (p PhysicalLock) Init(ctx sessionctx.Context, stats *property.StatsInfo, props ...*property.PhysicalProperty) *PhysicalLock {
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeLock, &p, 0)
+	p.childrenReqProps = props
+	p.stats = stats
+	return &p
+}
+
+// Init initializes PhysicalSelectInto.
+func (p PhysicalSelectInto) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalSelectInto {
+	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeInto, &p, offset)
 	p.childrenReqProps = props
 	p.stats = stats
 	return &p

@@ -778,6 +778,35 @@ type LogicalLimit struct {
 	Count  uint64
 }
 
+// LogicalSelectInto represents a select into plan.
+type LogicalSelectInto struct {
+	baseLogicalPlan
+
+	Tp         ast.SelectIntoType
+	FileName   string
+	FieldsInfo *ast.FieldsClause
+	LinesInfo  *ast.LinesClause
+}
+
+// SelectIntoInfo
+type SelectIntoInfo struct {
+	Tp         ast.SelectIntoType
+	FileName   string
+	FieldsInfo *ast.FieldsClause
+	LinesInfo  *ast.LinesClause
+}
+
+// SelectIntoVarKeyType is a dummy type to avoid naming collision in context.
+type SelectIntoVarKeyType int
+
+// String defines a Stringer function for debugging and pretty printing.
+func (k SelectIntoVarKeyType) String() string {
+	return "select_into_var"
+}
+
+// SelectIntoVarKey is a variable key for load data.
+const SelectIntoVarKey SelectIntoVarKeyType = 0
+
 // LogicalLock represents a select lock plan.
 type LogicalLock struct {
 	baseLogicalPlan
